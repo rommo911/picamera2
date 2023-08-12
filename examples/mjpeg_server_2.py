@@ -7,10 +7,12 @@ import logging
 import socketserver
 from http import server
 from threading import Condition
+import os
 
-from picamera2 import Picamera2
+from picamera2 import Picamera2 , Preview
 from picamera2.encoders import MJPEGEncoder
 from picamera2.outputs import FileOutput
+import time
 
 PAGE = """\
 <html>
@@ -19,7 +21,7 @@ PAGE = """\
 </head>
 <body>
 <h1>Picamera2 MJPEG Streaming Demo</h1>
-<img src="stream.mjpg" width="640" height="480" />
+<img src="stream.mjpg" width="1280" height="720" />
 </body>
 </html>
 """
@@ -35,6 +37,7 @@ class StreamingOutput(io.BufferedIOBase):
             self.frame = buf
             self.condition.notify_all()
 
+picam2 = Picamera2()
 
 class StreamingHandler(server.BaseHTTPRequestHandler):
     def do_GET(self):
@@ -49,7 +52,23 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
             self.send_header('Content-Length', len(content))
             self.end_headers()
             self.wfile.write(content)
+        elif self.path == '/still.html':
+            picam2.configure(picam2.create_still_configuration(main={"size": (1280, 720)}))
+            picam2.start()
+            picam2.capture_file("test.jpg")
+            with open("test.jpg", 'rb') as jpeg_file:
+                self.send_response(200)
+                self.send_header('Content-Type', 'image/jpeg')
+                self.send_header('Content-Length', os.path.getsize("test.jpg"))
+                self.end_headers()
+                self.wfile.write(jpeg_file.read())
+            picam2.stop()
         elif self.path == '/stream.mjpg':
+            picam2.configure(picam2.create_video_configuration(main={"size": (1280, 720)}))
+            mjpegencoder = MJPEGEncoder()
+            output = StreamingOutput()
+            StreamFile_output = FileOutput(output)
+            picam2.start_recording(mjpegencoder,StreamFile_output)
             self.send_response(200)
             self.send_header('Age', 0)
             self.send_header('Cache-Control', 'no-cache, private')
@@ -71,24 +90,22 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
                 logging.warning(
                     'Removed streaming client %s: %s',
                     self.client_address, str(e))
+                picam2.stop_recording()
         else:
             self.send_error(404)
             self.end_headers()
+        picam2.stop()
 
 
 class StreamingServer(socketserver.ThreadingMixIn, server.HTTPServer):
     allow_reuse_address = True
     daemon_threads = True
 
-
-picam2 = Picamera2()
-picam2.configure(picam2.create_video_configuration(main={"size": (640, 480)}))
-output = StreamingOutput()
-picam2.start_recording(MJPEGEncoder(), FileOutput(output))
-
 try:
     address = ('', 8000)
     server = StreamingServer(address, StreamingHandler)
+    print("Server started at http://localhost:8000")
     server.serve_forever()
-finally:
-    picam2.stop_recording()
+except KeyboardInterrupt:
+    server.shutdown()
+    print("Server stopped.")
