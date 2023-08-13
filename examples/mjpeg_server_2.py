@@ -38,9 +38,12 @@ class StreamingOutput(io.BufferedIOBase):
             self.condition.notify_all()
 
 picam2 = Picamera2()
+busy = False
 
 class StreamingHandler(server.BaseHTTPRequestHandler):
     def do_GET(self):
+        global busy
+        print(' *** GOT asked  %s',self.path )
         if self.path == '/':
             self.send_response(301)
             self.send_header('Location', '/index.html')
@@ -52,18 +55,30 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
             self.send_header('Content-Length', len(content))
             self.end_headers()
             self.wfile.write(content)
-        elif self.path == '/still.html':
-            picam2.configure(picam2.create_still_configuration(main={"size": (1280, 720)}))
-            picam2.start()
-            picam2.capture_file("test.jpg")
-            with open("test.jpg", 'rb') as jpeg_file:
-                self.send_response(200)
-                self.send_header('Content-Type', 'image/jpeg')
-                self.send_header('Content-Length', os.path.getsize("test.jpg"))
-                self.end_headers()
-                self.wfile.write(jpeg_file.read())
-            picam2.stop()
-        elif self.path == '/stream.mjpg':
+        elif (self.path == '/still.html' or  self.path == '/still.jpg'):
+            if (busy == True):
+                print ('avoiding double demandes :  ! ! !')
+                with open("test.jpg", 'rb') as jpeg_file:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/jpeg')
+                    self.send_header('Content-Length', os.path.getsize("test.jpg"))
+                    self.end_headers()
+                    self.wfile.write(jpeg_file.read())
+            else:              
+                busy = True
+                picam2.configure(picam2.create_still_configuration(main={"size": (1280, 720)}))
+                picam2.start()
+                picam2.capture_file("test.jpg")
+                with open("test.jpg", 'rb') as jpeg_file:
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'image/jpeg')
+                    self.send_header('Content-Length', os.path.getsize("test.jpg"))
+                    self.end_headers()
+                    self.wfile.write(jpeg_file.read())
+                    picam2.stop()
+                busy = False
+        elif self.path == '/stream.mjpg' and  busy == False :
+            busy= True
             picam2.configure(picam2.create_video_configuration(main={"size": (1280, 720)}))
             mjpegencoder = MJPEGEncoder()
             output = StreamingOutput()
@@ -90,11 +105,14 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
                 logging.warning(
                     'Removed streaming client %s: %s',
                     self.client_address, str(e))
-                picam2.stop_recording()
+            picam2.stop_recording()
+            picam2.stop()
+            busy = False
         else:
+            print('*** ')
             self.send_error(404)
             self.end_headers()
-        picam2.stop()
+        
 
 
 class StreamingServer(socketserver.ThreadingMixIn, server.HTTPServer):
