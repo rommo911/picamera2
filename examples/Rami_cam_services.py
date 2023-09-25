@@ -10,12 +10,13 @@ from threading import Condition
 import os
 import threading
 from time import sleep
-from picamera2 import Picamera2 , Preview
+from picamera2 import Picamera2 , MappedArray,Preview
 from picamera2.encoders import MJPEGEncoder
 from picamera2.outputs import FileOutput
 from picamera2.encoders import H264Encoder
 from picamera2.outputs import FfmpegOutput
 import time
+import cv2
 
 PAGE = """\
 <html>
@@ -40,9 +41,28 @@ class StreamingOutput(io.BufferedIOBase):
             self.frame = buf
             self.condition.notify_all()
 
+def apply_timestamp(request):
+    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    with MappedArray(request, "main") as m:
+        cv2.putText(m.array, timestamp, origin, font, scale, colour, thickness)
+
 picam2 = Picamera2()
 globalbusy = False
 busyrecording = False
+RecordHelperThread = threading.Thread()
+RecordHelperThread_event = threading.Event()
+picam2.pre_callback = apply_timestamp
+
+colour = (0, 255, 0)
+origin = (0, 30)
+font = cv2.FONT_HERSHEY_SIMPLEX
+scale = 1
+thickness = 2
+
+
+
+
+
 def SendOK(StreamingHandler):
     _PAGE ="""\
     <html> <head> <title>picamera2 Rami</title></head>
@@ -76,27 +96,28 @@ def SendNOT_OK(StreamingHandler):
     
 def StartImageCapture(StreamingHandler) :
     global globalbusy
+    filepath = "/tmp/test.jpg"
     if (globalbusy == True):
         print ('avoiding double demandes :  ! ! !')
-        with open("/tmp/test.jpg", 'rb') as jpeg_file:
+        with open(filepath, 'rb') as jpeg_file:
             StreamingHandler.send_response(200)
             StreamingHandler.send_header('Content-Type', 'image/jpeg')
-            StreamingHandler.send_header('Content-Length', os.path.getsize("test.jpg"))
+            StreamingHandler.send_header('Content-Length', os.path.getsize(filepath))
             StreamingHandler.end_headers()
             StreamingHandler.wfile.write(jpeg_file.read())
-    else:              
-        globalbusy = True
+    else:  
+        globalbusy = True  
         picam2.configure(picam2.create_still_configuration(main={"size": (1280, 720)}))
         picam2.start()
-        picam2.capture_file("/tmp/test.jpg")
-        with open("/tmp/test.jpg", 'rb') as jpeg_file:
+        picam2.capture_file(filepath)
+        with open(filepath, 'rb') as jpeg_file:
             StreamingHandler.send_response(200)
             StreamingHandler.send_header('Content-Type', 'image/jpeg')
-            StreamingHandler.send_header('Content-Length', os.path.getsize("test.jpg"))
+            StreamingHandler.send_header('Content-Length', os.path.getsize(filepath))
             StreamingHandler.end_headers()
             StreamingHandler.wfile.write(jpeg_file.read())
             picam2.stop()
-        globalbusy = False
+    globalbusy = False
         
 def StartStream(StreamingHandler) :
     global globalbusy
@@ -131,8 +152,7 @@ def StartStream(StreamingHandler) :
     picam2.stop()
     globalbusy = False
 
-RecordHelperThread = threading.Thread()
-RecordHelperThread_event = threading.Event()
+
 
 def StartRecord(StreamingHandler) :
     global globalbusy,busyrecording,RecordHelperThread_event
@@ -145,7 +165,8 @@ def StartRecord(StreamingHandler) :
         currentTime = time.strftime("%Y%m%d-%H-%M-%S")
         filename1 = '/tmp/record_' + currentTime + '.mp4'
         Ffmpeg_output = FfmpegOutput(filename1, audio=False)
-        picam2.start_recording(h264_encoder, Ffmpeg_output)
+        #
+        picam2.start_recording(h264_encoder, Ffmpeg_output) #  pts='timestamp.txt'
         SendOK(StreamingHandler)
         RecordHelperThread_event.clear()
         print(" started recording ")
@@ -183,7 +204,7 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
             print('*** ')
             self.send_error(404)
             self.end_headers()
-        elif (self.path == '/still.html' or  self.path == '/still.jpg'):
+        elif (self.path == '/still.html' or  self.path == '/still.jpg'  or  self.path == '/still'):
             StartImageCapture(self)
         elif self.path == '/stream.mjpg' and  globalbusy == False :
             StartStream(self)

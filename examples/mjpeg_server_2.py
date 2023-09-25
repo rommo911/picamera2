@@ -40,7 +40,7 @@ class StreamingOutput(io.BufferedIOBase):
 picam2 = Picamera2()
 busy = False
 
-class StreamingHandler(server.BaseHTTPRequestHandler):
+class MyCamHAndler(server.BaseHTTPRequestHandler):
     def do_GET(self):
         global busy
         print(' *** GOT asked  %s',self.path )
@@ -121,7 +121,7 @@ class StreamingServer(socketserver.ThreadingMixIn, server.HTTPServer):
 
 try:
     address = ('', 8000)
-    server = StreamingServer(address, StreamingHandler)
+    server = StreamingServer(address, MyCamHAndler)
     print("Server started at http://localhost:8000")
     server.serve_forever()
 except KeyboardInterrupt:
