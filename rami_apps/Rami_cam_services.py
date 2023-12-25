@@ -23,11 +23,13 @@ import json
 from paho.mqtt import client as mqtt_client
 
 picam2 = Picamera2()
-
-mqtt_topic_lux = "rpi_cam/lux"
-mqtt_topic_motion = "rpi_cam/motion"
-mqtt_topic_motion_detection = "rpi_cam/motion_detection"
-mqtt_topic_base = "rpi_cam/status/"
+mqtt_topic_base = "rpi_cam"
+mqtt_topic_availability = mqtt_topic_base + "/status"
+mqtt_topic_lux = mqtt_topic_base + "/lux"
+mqtt_topic_motion = mqtt_topic_base + "/motion"
+mqtt_topic_motion_detection = mqtt_topic_base + "/motion_detection"
+temp_capture_file_path = "/tmp/test.jpg"
+requestImageSave = False
 
 class MQTT():
     def __init__(self):
@@ -37,27 +39,31 @@ class MQTT():
         self.username = 'rami'
         self.password = '5461'
         self.mqtt_client = mqtt_client.Client(self.mqtt_client_id)
-
-    def mqtt_on_connect(self,client, userdata, flags, rc):
+        self.RECONNECT_RATE = 1.1
+        self.MAX_RECONNECT_COUNT = 5
+        self.reconnect_delay = 2
+        self.MAX_RECONNECT_DELAY = 10
+    def mqtt_on_connect(self , client, userdata, flags, rc):
+        print("Connected to MQTT Broker YAAAAAAAAAAAAAAAAAY!")
         if rc == 0:
-            print("Connected to MQTT Broker!")
+            print("Connected to MQTT Broker YAAAAAAAAAAAAAAAAAY!")
         else:
             print("Failed to connect, return code %d\n", rc)
 
-    def mqtt_on_disconnect(self,client, userdata, rc):
+    def mqtt_on_disconnect(self ,client, userdata, rc):
         print("Disconnected with result code: %s", rc)
-        reconnect_count, reconnect_delay = 0, FIRST_RECONNECT_DELAY
-        while reconnect_count < MAX_RECONNECT_COUNT:
-            print("Reconnecting in %d seconds...", reconnect_delay)
-            time.sleep(reconnect_delay)
+        reconnect_count = 0
+        while reconnect_count < self.MAX_RECONNECT_COUNT:
+            print("Reconnecting in %d seconds...", self.reconnect_delay)
+            time.sleep(self.reconnect_delay)
             try:
                 client.reconnect()
                 print("Reconnected successfully!")
                 return
             except Exception as err:
                 print("%s. Reconnect failed. Retrying...", err)
-            reconnect_delay *= RECONNECT_RATE
-            reconnect_delay = min(reconnect_delay, MAX_RECONNECT_DELAY)
+            self.reconnect_delay *= self.RECONNECT_RATE
+            self.reconnect_delay = min(self.reconnect_delay, self.MAX_RECONNECT_DELAY)
             reconnect_count += 1
         print("Reconnect failed after %s attempts. Exiting...", reconnect_count)
 
@@ -69,13 +75,12 @@ class MQTT():
         self.mqtt_client.on_connect = self.mqtt_on_connect
         self.mqtt_client.on_disconnect = self.mqtt_on_disconnect
         self.mqtt_client.connect(self.mqtt_broker, self.mqtt_port)
-        self.mqtt_client.will_set(mqtt_topic_base, payload="Offline", qos=1, retain=True)
-
+        self.mqtt_client.will_set(mqtt_topic_availability, payload="offline", qos=1, retain=True)
         print("connect_mqtt done")
         return self.mqtt_client
 
 
-def current_milli_time():
+def current_time_second():
     return round(time.time())
 
 #  configuration settings
@@ -147,50 +152,39 @@ def SendNOT_OK(StreamingHandler):
     StreamingHandler.send_header('Content-Type', 'text/html')
     StreamingHandler.send_header('Content-Length', len(content))
     StreamingHandler.end_headers()
-    StreamingHandler.wfile.write(content)
-    
+    StreamingHandler.wfile.write(content)    
     
 def StartImageCapture(StreamingHandler) :
-    global globalbusy , last_timetamb_ms
-    filepath = "/tmp/test.jpg"
-    _now = current_milli_time()
-    print("check duplicate now= ",_now , " , last="  ,last_timetamb_ms)
-    if (globalbusy == True or ( _now < (last_timetamb_ms + 20 ))):
-        print("StartImageCapture duplicate now= ",_now , " , last="  ,last_timetamb_ms, " global_busy= " , globalbusy)
-        try:
-            with open(filepath, 'rb') as jpeg_file:
+    global last_timetamb_ms,requestImageSave,temp_capture_file_path
+    _now = current_time_second() - 1703546000
+    try:
+        if ( _now < (last_timetamb_ms + 10 ) ):
+            print("duplicate now= ",_now , " , last="  ,last_timetamb_ms)
+            with open(temp_capture_file_path, 'rb') as jpeg_file:
                 StreamingHandler.send_response(200)
                 StreamingHandler.send_header('Content-Type', 'image/jpeg')
-                StreamingHandler.send_header('Content-Length', os.path.getsize(filepath))
+                StreamingHandler.send_header('Content-Length', os.path.getsize(temp_capture_file_path))
                 StreamingHandler.end_headers()
                 StreamingHandler.wfile.write(jpeg_file.read())
-        except  Exception as exc:
-            print(" capture erro jpeg_file exception %s ",str(exc))
-    else:  
-        try:
-            print("StartImageCapture new capture ")
-            globalbusy = True  
-            sleep(1)
-            picam2.stop()
-            picam2.configure(picam2.create_still_configuration(main={"size": IMAGE_RESOLUTION}))
-            picam2.set_controls(cnontrols)
-            picam2.start()
-            picam2.capture_file(filepath)
-            with open(filepath, 'rb') as jpeg_file:
+        else: 
+            print("requesting new image")
+            requestImageSave = True
+            last_timetamb_ms = _now
+            sleep(0.5)
+            with open(temp_capture_file_path, 'rb') as jpeg_file:
                 StreamingHandler.send_response(200)
                 StreamingHandler.send_header('Content-Type', 'image/jpeg')
-                StreamingHandler.send_header('Content-Length', os.path.getsize(filepath))
+                StreamingHandler.send_header('Content-Length', os.path.getsize(temp_capture_file_path))
                 StreamingHandler.end_headers()
                 StreamingHandler.wfile.write(jpeg_file.read())
-            last_timetamb_ms = current_milli_time()
-        except  Exception as exc:
-            print(" capture erro exception %s ",str(exc))
-        picam2.stop()
-        globalbusy = False
-    
-        
+    except  Exception as exc:
+        print(" capture erro jpeg_file exception %s ",str(exc))
+
 def StartStream(StreamingHandler) :
     global globalbusy, ExitAllThread
+    if (globalbusy == True):
+        SendNOT_OK(StreamingHandler)
+        return
     try :
         globalbusy = True
         print("wait for motion to stop")
@@ -232,14 +226,15 @@ def StartStream(StreamingHandler) :
     print("stream handler done")
 
 def checkMotionThread():
-    global motionValue , ExitAllThread , _mqtt_client , globalbusy
+    global motionValue , ExitAllThread , _mqtt_client , globalbusy, requestImageSave
     lsize = (320, 240)
     started = False
     w, h = lsize
-    prev = None
-    checkLuxCounter = 0
+    buf_prev = None
+    lux_value = 0
+    _now_lux_value = 0 
     last_detcted = "0"
-    detected = "0"
+    detection = "off"
     print("started motion thread ") 
     while (ExitAllThread == False):
             if (globalbusy == False ):
@@ -249,64 +244,59 @@ def checkMotionThread():
                         picam2.stop()
                         picam2.configure(picam2.create_video_configuration(main={"size": (1280, 720)}, lores={"size": lsize, "format": "YUV420"}))
                         picam2.start()
+                        sleep(0.5)
                         started = True
                     except: 
                         print("exception in motion" )
                         started = False
                         picam2.stop()
-                cur = picam2.capture_buffer("lores")
-                cur = cur[:w * h].reshape(h, w)
-                if prev is not None:
-                    temp_motionValue = np.square(np.subtract(cur, prev)).mean()
-                    #
-                    #print(" *********** motion =",temp_motionValue)
-                    if (temp_motionValue > 10):
-                        detection = "1"
-                        if(motionValue < 20 ):
-                            checkLuxCounter = checkLuxCounter + 25 
-                            motionValue = motionValue+1
-                            print(" *********** motion detected ",temp_motionValue , ", total = " , motionValue)
-                            _mqtt_client.publish(mqtt_topic_motion,json.dumps({"motion" : motionValue}))
-                    else:
-                        detection = "0"
-                        if(motionValue > 0):
-                            motionValue = motionValue - 1
-                            if(motionValue == 0):
-                                _mqtt_client.publish(mqtt_topic_motion,json.dumps({"motion" : motionValue}))
-                    if (last_detcted != detection):
-                        last_detcted = detection
-                        _mqtt_client.publish(mqtt_topic_motion_detection,json.dumps({"motion_Detction" :detection}))
-                else :
-                    cur = picam2.capture_buffer("lores")
-                    cur = cur[:w * h].reshape(h, w)
-                prev = cur
-                sleep(0.2)
-                checkLuxCounter = checkLuxCounter+ 1
-                if (checkLuxCounter > 100):
-                    try:
-                        print("*********** stopping cam for LUX  measurement ********** ") 
-                        checkLuxCounter = 0
-                        picam2.stop()
-                        started = False
-                        picam2.configure(picam2.create_still_configuration(main={"size": IMAGE_RESOLUTION}))
-                        picam2.set_controls(cnontrols)
-                        picam2.start()
-                        request = picam2.capture_request()
-                        metadata = request.get_metadata()
-                        request.release()
-                        picam2.stop()
-                        lux_value = int(metadata['Lux'])
-                        print("lux=",lux_value,)
-                        _mqtt_client.publish(mqtt_topic_lux,json.dumps({"lux" : lux_value}))
-                    except Exception as exc:
-                        print(" lux error exception %s ", str(exc))  
+                (buf_cur, ), metadata = picam2.capture_buffers(["main"])
+                if (requestImageSave):
+                    requestImageSave = False
+                    img = picam2.helpers.make_image(buf_cur, picam2.camera_configuration()["main"])
+                    picam2.helpers.save(img, metadata, temp_capture_file_path)
+                    print("new image saved " )
+                _now_lux_value = int(metadata['Lux'])
+                if abs(_now_lux_value - lux_value ) > 1:
+                    lux_value = _now_lux_value
+                    print("lux=",lux_value)
+                    _mqtt_client.publish(mqtt_topic_lux,json.dumps({"lux" : lux_value}))
+                    sleep(0.5)
+                    buf_prev = None
+                else: 
+                    buf_cur = picam2.capture_buffer("lores")
+                    if buf_cur is not None :
+                        buf_cur = buf_cur[:w * h].reshape(h, w)
+                        if (buf_prev is not None) :
+                            temp_motionValue = np.square(np.subtract(buf_cur, buf_prev)).mean()
+                            #
+                            #print(" *********** motion =",temp_motionValue)
+                            if (temp_motionValue > 10):
+                                detection = "on"
+                                if(motionValue < 20 ):
+                                    motionValue = motionValue+1
+                                    print(" *********** motion detected ",temp_motionValue , ", total = " , motionValue)
+                                    _mqtt_client.publish(mqtt_topic_motion,json.dumps({"motion" : motionValue}))
+                            else:
+                                detection = "off"
+                                if(motionValue > 0):
+                                    motionValue = motionValue - 1
+                                    if(motionValue == 0):
+                                        _mqtt_client.publish(mqtt_topic_motion,json.dumps({"motion" : motionValue}))
+                            if (last_detcted != detection):
+                                last_detcted = detection
+                                _mqtt_client.publish(mqtt_topic_motion_detection,json.dumps({"motion_Detction" :detection , "diff" : temp_motionValue}))
+                        else :
+                            buf_cur = picam2.capture_buffer("lores")
+                            buf_cur = buf_cur[:w * h].reshape(h, w)
+                        buf_prev = buf_cur
+                    sleep(0.4)
             elif (started):
                 print("*********** stopping motion ********** ") 
-                prev = None
-                picam2.stop()
+                buf_prev = None
                 started = False
             else :
-                sleep(1)
+                sleep(0.5)
     print("motion thread out ") 
 
 def StartRecord(StreamingHandler) :
@@ -315,6 +305,7 @@ def StartRecord(StreamingHandler) :
         try:
             globalbusy = True
             busyrecording = True 
+            sleep(0.5)
             picam2.stop()
             picam2.configure(picam2.create_video_configuration(main={"size": (1280, 720)}))
             picam2.set_controls(cnontrols)
@@ -354,11 +345,6 @@ def StopRecord(StreamingHandler) :
 class StreamingHandler(server.BaseHTTPRequestHandler):
     def do_GET(self):
         global globalbusy
-        if (globalbusy == True):
-            self.send_error(404)
-            self.end_headers()
-            print(' received request ',self.path ," DENIED , BUSY")
-            return
         print(' received request ',self.path ,"***")
         try : 
             if (self.path == '/'):
@@ -374,9 +360,10 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
                 StartStream(self)
             elif self.path == '/record.start':
                 if (busyrecording == False):
+                    busyrecording = True
                     HelperThread = threading.Thread(target = StartRecord(self) )
                     HelperThread.start()
-                    sleep(3)
+                    sleep(1)
                 else :
                     SendNOT_OK(self)
             elif self.path == '/record.stop':
@@ -387,7 +374,6 @@ class StreamingHandler(server.BaseHTTPRequestHandler):
         except Exception as ex : 
             print("request process exception =",ex)
 
-
 class StreamingServer(socketserver.ThreadingMixIn, server.HTTPServer):
     allow_reuse_address = True
     #daemon_threads = True
@@ -396,10 +382,10 @@ MqttClass =  MQTT()
 _mqtt_client = MqttClass.connect_mqtt()
 ExitAllThread = False
 globalbusy = False
-_mqtt_client.publish(mqtt_topic_motion_detection,json.dumps({"motion_Detction" :"0"}))
+_mqtt_client.publish(mqtt_topic_motion_detection,json.dumps({"motion_Detction" :"off"}))
 _mqtt_client.publish(mqtt_topic_motion,json.dumps({"motion" :"0"}))
 _mqtt_client.publish(mqtt_topic_lux,json.dumps({"lux" :"0"}))
-_mqtt_client.publish(mqtt_topic_base,"online")
+_mqtt_client.publish(mqtt_topic_availability,"online", retain=True)
 
 MotionHelperThread = threading.Thread( target = checkMotionThread )
 MotionHelperThread.start()
@@ -412,6 +398,4 @@ except KeyboardInterrupt:
     server.shutdown()
     ExitAllThread = True
     print("Server stopped.") 
-_mqtt_client.publish(mqtt_topic_base,"offline")
-
-    
+_mqtt_client.publish(mqtt_topic_availability,"offline")

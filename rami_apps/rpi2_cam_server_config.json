@@ -1,0 +1,12 @@
+{
+    "Detection_sensitivity" : "35",
+    
+    "mqtt" : 
+    {
+        "host" : "127.0.0.1" ,
+        "port": 8883,
+        "user" : "rami" ,
+        "password" : "5461",
+        "base topic" : "rpi_hall_cam"
+    }
+}
