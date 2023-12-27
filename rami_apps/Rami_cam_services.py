@@ -171,7 +171,7 @@ def StartImageCapture(StreamingHandler) :
     _now = current_time_second() - 1703546000
     try:
         if ( _now < (last_timetamb_ms + 10 ) ):
-            logger.info("duplicate now= ",_now , " , last="  ,last_timetamb_ms)
+            logger.info("duplicate now= %d , latest = %d ",_now ,last_timetamb_ms)
             with open(temp_capture_file_path, 'rb') as jpeg_file:
                 StreamingHandler.send_response(200)
                 StreamingHandler.send_header('Content-Type', 'image/jpeg')
@@ -371,7 +371,7 @@ def StopRecord(StreamingHandler) :
 class StreamingHandler(server.BaseHTTPRequestHandler):
     def do_GET(self):
         global globalbusy , busyrecording
-        logger.info(' received request ',self.path ,"***")
+        logger.info(' received request %s ',self.path)
         try : 
             if (self.path == '/'):
                 self.send_response(301)
