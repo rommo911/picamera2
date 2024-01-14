@@ -1,0 +1,9 @@
+INFO :  connect_mqtt 
+INFO :  connect_mqtt done 
+INFO :  started motion thread  
+INFO :   *********** start motion cam config ************ 
+INFO :  Server started at http://localhost:8000 
+INFO :  lux=3 
+INFO :   received request /still.html  
+INFO :  requesting new image 
+INFO :  Server stopped. 

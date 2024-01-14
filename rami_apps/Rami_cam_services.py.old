@@ -25,13 +25,8 @@ import logging
 from systemd import journal 
 
 logger = logging.getLogger(__name__)
-#logger.addHandler(journal.JournalHandler())
-handler = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-# add the handler to the logger
-logger.addHandler(handler)
-logger.setLevel(logging.INFO)
+logger.addHandler(journal.JournalHandler())
+logger.setLevel(logging.DEBUG)
 
 
 picam2 = Picamera2()
@@ -254,7 +249,6 @@ def checkMotionThreadWrapper() :
             logger.error("checkMotionThread exception =%s",ex)  
 
 def checkMotionThread():
-    print("Disconnected with result")
     global motionValue , ExitAllThread , _mqtt_client , globalbusy, requestImageSave
     lsize = (320, 240)
     started = False
@@ -262,7 +256,6 @@ def checkMotionThread():
     buf_prev = None
     lux_value = 0
     _now_lux_value = 0 
-    luxCounter = 0
     last_detcted = "0"
     detection = "off"
     logger.info("started motion thread ") 
@@ -280,35 +273,58 @@ def checkMotionThread():
                         logger.error("exception in motion = %s" ,ex)
                         started = False
                         picam2.stop()
-                if (requestImageSave == True):
-                    (buf_cur, ), metadata = picam2.capture_buffers(["main"])
+                (buf_cur, ), metadata = picam2.capture_buffers(["main"])
+                if (requestImageSave):
                     img = picam2.helpers.make_image(buf_cur, picam2.camera_configuration()["main"])
                     picam2.helpers.save(img, metadata, temp_capture_file_path)
                     logger.info("new image saved " )
                     requestImageSave = False
-                    _now_lux_value = int(metadata['Lux'])
-                    luxCounter = 0
-                else: 
-                    #start lux 
-                    if (luxCounter > 30):
-                        luxCounter = 0
-                        logger.info("capturing lux periodicely")
-                        (buf_cur, ), metadata = picam2.capture_buffers(["main"])
-                        _now_lux_value = int(metadata['Lux'])
-                    else :
-                        luxCounter = luxCounter +1 
-
-                    #end lux 
-                if abs(_now_lux_value - lux_value ) > 2:
+                _now_lux_value = int(metadata['Lux'])
+                compareValue = 1
+                motionCompareValue = 10
+                if (_now_lux_value > 100):
+                    compareValue = 15
+                    motionCompareValue =  8 
+                if abs(_now_lux_value - lux_value ) > compareValue:
                     lux_value = _now_lux_value
                     logger.info("lux=%d",lux_value)
                     _mqtt_client.publish(mqtt_topic_lux,json.dumps({"lux" : lux_value}))
-                sleep(0.1)
+                    sleep(0.5)
+                    buf_prev = None
+                else: 
+                    buf_cur = picam2.capture_buffer("lores")
+                    if buf_cur is not None :
+                        buf_cur = buf_cur[:w * h].reshape(h, w)
+                        if (buf_prev is not None) :
+                            temp_motionValue = np.square(np.subtract(buf_cur, buf_prev)).mean()
+                            #
+                            #print(" *********** motion =",temp_motionValue)
+                            if (temp_motionValue > motionCompareValue):
+                                detection = "on"
+                                if(motionValue < 20 ):
+                                    motionValue = motionValue+1
+                                    logger.info(" *********** motion detected ",temp_motionValue , ", total = " , motionValue)
+                                    _mqtt_client.publish(mqtt_topic_motion,json.dumps({"motion" : motionValue}))
+                            else:
+                                if(motionValue > 0):
+                                    motionValue = motionValue - 1
+                                    if(motionValue == 0):
+                                        detection = "off"
+                                        _mqtt_client.publish(mqtt_topic_motion,json.dumps({"motion" : motionValue}))
+                            if (last_detcted != detection):
+                                last_detcted = detection
+                                _mqtt_client.publish(mqtt_topic_motion_detection,json.dumps({"motion_Detction" :detection , "diff" : temp_motionValue}))
+                        else :
+                            buf_cur = picam2.capture_buffer("lores")
+                            buf_cur = buf_cur[:w * h].reshape(h, w)
+                        buf_prev = buf_cur
+                    sleep(0.3)
             elif (started):
                 logger.info("*********** stopping motion ********** ") 
+                buf_prev = None
                 started = False
             else :
-                sleep(0.2)
+                sleep(0.5)
     logger.info("motion thread out ") 
 
 def StartRecord(StreamingHandler) :
