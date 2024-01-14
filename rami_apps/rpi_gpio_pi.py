@@ -13,8 +13,13 @@ import logging
 from systemd import journal 
 
 logger = logging.getLogger(__name__)
-logger.addHandler(journal.JournalHandler())
-logger.setLevel(logging.DEBUG)
+#logger.addHandler(journal.JournalHandler())
+handler = logging.StreamHandler()
+formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+# add the handler to the logger
+logger.addHandler(handler)
+logger.setLevel(logging.INFO)
 
 
 mqtt_topic_base = "rpi_pir"
@@ -25,19 +30,18 @@ class MQTT():
     def __init__(self):
         self.mqtt_broker = 'localhost'
         self.mqtt_port = 8883
-        self.mqtt_client_id = "rpi_cam_sensor"
+        self.mqtt_client_id = "rpi_pi_sensor"
         self.username = 'rami'
         self.password = '5461'
         self.mqtt_client = mqtt_client.Client(self.mqtt_client_id)
-        self.RECONNECT_RATE = 1.1
-        self.MAX_RECONNECT_COUNT = 5
+        self.RECONNECT_RATE = 2
+        self.MAX_RECONNECT_COUNT = 100
         self.reconnect_delay = 2
         self.MAX_RECONNECT_DELAY = 10
         self.DisconnectFlag = False
     def mqtt_on_connect(self , client, userdata, flags, rc):
-        logger.info("Connected to MQTT Broker YAAAAAAAAAAAAAAAAAY!")
         if rc == 0:
-            logger.info("Connected to MQTT Broker YAAAAAAAAAAAAAAAAAY!")
+            logger.info("Connected to MQTT Broker!")
         else:
             logger.info("Failed to connect, return code %d\n", rc)
 
@@ -66,9 +70,10 @@ class MQTT():
         # Set Connecting Client ID
         self.mqtt_client = mqtt_client.Client(self.mqtt_client_id)
         self.mqtt_client.username_pw_set(self.username, self.password)
+        self.mqtt_client.reconnect_delay_set(2)
         self.mqtt_client.on_connect = self.mqtt_on_connect
         self.mqtt_client.on_disconnect = self.mqtt_on_disconnect
-        self.mqtt_client.connect(self.mqtt_broker, self.mqtt_port)
+        self.mqtt_client.connect(self.mqtt_broker, self.mqtt_port , 2 )
         #self.mqtt_client.will_set(mqtt_topic_availability, payload="offline", qos=1, retain=True)
         logger.info("connect_mqtt done")
         return self.mqtt_client
@@ -102,11 +107,12 @@ try:
 
     # Main loop
     while True:
-        time.sleep(1)
+        _mqtt_client.loop_forever()
+        print("ping loop ")
 
 except KeyboardInterrupt:
     print("Program terminated by user.")
     GPIO.cleanup()
-    MqttClass.disconnectFalg = True
+    MqttClass.DisconnectFlag = True
     _mqtt_client.publish(mqtt_topic_availability,"offline", retain=True)
     _mqtt_client.disconnect()

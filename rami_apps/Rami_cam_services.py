@@ -58,9 +58,9 @@ class MQTT():
         self.MAX_RECONNECT_DELAY = 10
         self.DisconnectFlag = False
     def mqtt_on_connect(self , client, userdata, flags, rc):
-        logger.info("Connected to MQTT Broker YAAAAAAAAAAAAAAAAAY!")
         if rc == 0:
             logger.info("Connected to MQTT Broker YAAAAAAAAAAAAAAAAAY!")
+            self.mqtt_client.publish(mqtt_topic_availability,"online", retain=True)
         else:
             logger.info("Failed to connect, return code %d\n", rc)
 
@@ -75,7 +75,6 @@ class MQTT():
             try:
                 client.reconnect()
                 logger.info("Reconnected successfully!")
-                client.publish(mqtt_topic_availability,"online", retain=True)
                 return
             except Exception as err:
                 logger.error("%s. Reconnect failed. Retrying...", err)
@@ -207,7 +206,7 @@ def StartStream(StreamingHandler) :
     try :
         globalbusy = True
         logger.info("wait for motion to stop")
-        sleep(0.5)
+        sleep(0.2)
         picam2.stop()
         picam2.configure(picam2.create_video_configuration(main={"size": (1280, 720)}))
         picam2.set_controls(cnontrols)
@@ -270,7 +269,7 @@ def checkMotionThread():
             if (globalbusy == False ):
                 if (started == False):
                     try: 
-                        logger.info(" *********** start motion cam config ************") 
+                        logger.info(" *********** start motion/lux / capture cam config ************") 
                         picam2.stop()
                         picam2.configure(picam2.create_video_configuration(main={"size": (1280, 720)}, lores={"size": lsize, "format": "YUV420"}))
                         picam2.start()
@@ -290,7 +289,7 @@ def checkMotionThread():
                     luxCounter = 0
                 else: 
                     #start lux 
-                    if (luxCounter > 30):
+                    if (luxCounter > 90):
                         luxCounter = 0
                         logger.info("capturing lux periodicely")
                         (buf_cur, ), metadata = picam2.capture_buffers(["main"])
@@ -394,22 +393,63 @@ MqttClass =  MQTT()
 _mqtt_client = MqttClass.connect_mqtt()
 ExitAllThread = False
 globalbusy = False
-_mqtt_client.publish(mqtt_topic_motion_detection,json.dumps({"motion_Detction" :"off"}))
-_mqtt_client.publish(mqtt_topic_motion,json.dumps({"motion" :"0"}))
 _mqtt_client.publish(mqtt_topic_lux,json.dumps({"lux" :"0"}))
 _mqtt_client.publish(mqtt_topic_availability,"online", retain=True)
 
+
+address = ('', 8000)
+server = StreamingServer(address, StreamingHandler)
+
 MotionHelperThread = threading.Thread( target = checkMotionThreadWrapper )
 MotionHelperThread.start()
-try:
-    address = ('', 8000)
-    server = StreamingServer(address, StreamingHandler)
+
+def infiniteloop1():
+    print('Loop 1')
     logger.info("Server started at http://localhost:8000")
-    server.serve_forever()
-except KeyboardInterrupt:
-    server.shutdown()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:  
+        pass
+    finally: 
+        server.shutdown()
+        logger.info("Server stopped.")
+        logger.info("Server thread stopped.") 
+
+def infiniteloop2():
+    print('Loop 2') 
+    try:
+        while(ExitAllThread == False):
+            _mqtt_client.loop_forever()
+    except KeyboardInterrupt:  
+        pass
+    finally: 
+        _mqtt_client.publish(mqtt_topic_availability,"offline")
+        logger.info("mqtt thread stopped.") 
+
+
+thread2 = threading.Thread(target=infiniteloop2)
+thread2.start()
+
+thread1 = threading.Thread(target=infiniteloop1)
+thread1.start()
+
+try:
+    MotionHelperThread.join()
+    thread1.join()
+    thread2.join()
+except KeyboardInterrupt:    
     ExitAllThread = True
-    logger.info("Server stopped.") 
-    _mqtt_client.publish(mqtt_topic_availability,"offline")
+    server.shutdown()
     MqttClass.DisconnectFlag = True
     _mqtt_client.disconnect()
+
+        
+        
+
+
+
+
+
+
+
+
